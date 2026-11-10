@@ -88,7 +88,36 @@ If `ADMIN_API_KEY` is not set, these endpoints are open.
 
 ---
 
-## 3) Generations List (Advanced Filters)
+## 3) MCP Server
+
+### POST `/mcp`
+
+**Description**: Stateless Streamable HTTP MCP endpoint for ChatGPT, Claude, and other MCP clients. Supports the 2025 Streamable HTTP versions and the 2026-07-28 request-metadata format.
+
+**MCP tool**: `generate_ppt`
+
+Tool arguments:
+- `presentation` (required object): same JSON format used by `/generate_ppt`, with `meta` and `slides`.
+- `file_name` (optional string): desired file name without `.pptx`.
+- `jain_data` (optional object): same academic title slide information accepted by `/generate_ppt`.
+
+Successful tool results include a Markdown download link and structured content:
+```json
+{
+  "generation_id": 42,
+  "file_name": "quarterly-review.pptx",
+  "download_url": "https://your-domain.example/downloads/<opaque-token>",
+  "download_markdown": "[Download quarterly-review.pptx](https://your-domain.example/downloads/<opaque-token>)"
+}
+```
+
+MCP calls create the same `generations` and `students` records as web requests. The PPTX bytes are stored in the additive `generated_files` table and served by `GET /downloads/<opaque-token>`, so download links work across app workers and restarts as long as the configured database persists.
+
+Set `PUBLIC_BASE_URL` to the public HTTPS base URL when the app runs behind a reverse proxy or hosting platform. `MCP_ALLOWED_ORIGINS` adds exact comma-separated browser origins allowed to call `/mcp`; ChatGPT and Claude web origins are allowed by default. MCP clients without an `Origin` header can connect directly.
+
+---
+
+## 4) Generations List (Advanced Filters)
 
 ### GET `/api/generations`
 
@@ -188,7 +217,7 @@ Sorting:
 
 ---
 
-## 4) Generation Detail
+## 5) Generation Detail
 
 ### GET `/api/generations/<id>`
 
@@ -204,7 +233,7 @@ Same shape as a single item in the list endpoint.
 
 ---
 
-## 5) Export (Admin-Only API Endpoint)
+## 6) Export (Admin-Only API Endpoint)
 
 ### GET `/api/generations/export`
 

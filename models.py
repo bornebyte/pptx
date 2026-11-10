@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
+import uuid
 
 db = SQLAlchemy()
 
@@ -67,6 +68,25 @@ class Student(db.Model):
     
     def __repr__(self):
         return f'<Student {self.name} ({self.usn})>'
+
+
+class GeneratedFile(db.Model):
+    """Persist generated PowerPoint files so remote clients can download them."""
+    __tablename__ = 'generated_files'
+
+    token = db.Column(db.String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
+    generation_id = db.Column(db.Integer, db.ForeignKey('generations.id'), nullable=False, index=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    mime_type = db.Column(
+        db.String(127),
+        nullable=False,
+        default='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    )
+    file_data = db.Column(db.LargeBinary, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    def __repr__(self):
+        return f'<GeneratedFile {self.file_name} for generation {self.generation_id}>'
 
 
 class Feedback(db.Model):

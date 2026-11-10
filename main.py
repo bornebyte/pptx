@@ -2,10 +2,10 @@ import csv
 import io
 import json
 import os
-import tempfile
 import time
+import uuid
 from datetime import datetime, date
-from flask import Flask, render_template, request, send_file, jsonify, redirect, url_for, Response
+from flask import Flask, render_template, request, send_file, jsonify, redirect, url_for, Response, abort
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -13,7 +13,7 @@ from pptx.enum.text import PP_ALIGN, PP_PARAGRAPH_ALIGNMENT
 from pptx.enum.dml import MSO_THEME_COLOR
 from werkzeug.utils import secure_filename
 from sqlalchemy import or_
-from models import db, Generation, Student, Feedback, get_analytics_summary
+from models import db, Generation, Student, GeneratedFile, Feedback, get_analytics_summary
 
 app = Flask(__name__)
 
@@ -28,6 +28,23 @@ ALLOWED_ORIGINS = {
     "https://notes.shubham-shah.com.np",
 }
 
+# Browser-based MCP clients send Origin headers. Non-browser MCP clients often
+# omit them; when one is present, require an exact allowlist match.
+MCP_ALLOWED_ORIGINS = ALLOWED_ORIGINS | {
+    origin.strip()
+    for origin in os.getenv(
+        'MCP_ALLOWED_ORIGINS',
+        'https://chatgpt.com,https://chat.openai.com,https://claude.ai,https://claude.com,http://localhost:3000,http://127.0.0.1:3000'
+    ).split(',')
+    if origin.strip()
+}
+
+MCP_LEGACY_PROTOCOL_VERSIONS = {'2025-03-26', '2025-06-18', '2025-11-25'}
+MCP_MODERN_PROTOCOL_VERSIONS = {'2026-07-28'}
+MCP_SUPPORTED_PROTOCOL_VERSIONS = MCP_LEGACY_PROTOCOL_VERSIONS | MCP_MODERN_PROTOCOL_VERSIONS
+MCP_LATEST_LEGACY_PROTOCOL_VERSION = '2025-11-25'
+PPTX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
 def is_allowed_origin(origin):
     if not origin:
         return False
@@ -40,12 +57,16 @@ def is_allowed_origin(origin):
         return True
     return False
 
+
+def is_allowed_mcp_origin(origin):
+    return origin in MCP_ALLOWED_ORIGINS
+
 @app.before_request
 def handle_preflight():
     if request.method != "OPTIONS":
         return None
     origin = request.headers.get("Origin")
-    if not is_allowed_origin(origin):
+    if not (is_allowed_origin(origin) or (request.path == '/mcp' and is_allowed_mcp_origin(origin))):
         return Response(status=403)
     resp = Response(status=204)
     resp.headers["Access-Control-Allow-Origin"] = origin
@@ -61,12 +82,16 @@ def handle_preflight():
 @app.after_request
 def add_cors_headers(response):
     origin = request.headers.get("Origin")
-    if is_allowed_origin(origin):
+    if is_allowed_origin(origin) or (request.path == '/mcp' and is_allowed_mcp_origin(origin)):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Authorization, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id"
+        )
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+        if request.path == '/mcp':
+            response.headers["Access-Control-Expose-Headers"] = "MCP-Protocol-Version, Mcp-Session-Id"
     return response
 
 # Admin credentials (change these!)
@@ -906,16 +931,17 @@ def create_college_title_slide(prs, college_data):
 
 @app.route('/generate_ppt', methods=['POST'])
 def generate_ppt():
-    start_time = time.time()
-    generation = None
-    
     try:
         # Get JSON data from request or use default content.json
         if request.is_json:
-            data = request.get_json()
+            data = request.get_json() or {}
+            if not isinstance(data, dict):
+                return jsonify({'error': 'Request body must be a JSON object'}), 400
             if 'json_data' in data:
                 # Parse JSON string from frontend
-                content = json.loads(data['json_data'])
+                content = data['json_data']
+                if isinstance(content, str):
+                    content = json.loads(content)
                 file_name = data.get('file_name', 'presentation')
                 jain_data = data.get('jain_data')  # Get college/university data if provided
             else:
@@ -930,16 +956,44 @@ def generate_ppt():
             jain_data = None
         
         # Validate required fields
-        if 'meta' not in content or 'slides' not in content:
+        if not isinstance(content, dict) or 'meta' not in content or 'slides' not in content:
             return jsonify({'error': 'Invalid JSON structure. Required: meta and slides'}), 400
-        
-        # Analyze content for tracking
-        num_slides = len([s for s in content.get('slides', []) if s.get('type') != 'title'])
-        has_tables = any('table' in str(s.get('blocks', [])).lower() for s in content.get('slides', []))
-        has_images = any('image' in str(s.get('blocks', [])).lower() for s in content.get('slides', []))
-        has_charts = any('chart' in str(s.get('blocks', [])).lower() for s in content.get('slides', []))
-        
-        # Create generation record
+        output = _generate_presentation(content, file_name, jain_data)
+        return send_file(
+            io.BytesIO(output['file_data']),
+            as_attachment=True,
+            download_name=output['file_name'],
+            mimetype=PPTX_MIME_TYPE
+        )
+    except json.JSONDecodeError as e:
+        return jsonify({'error': f'Invalid JSON: {str(e)}'}), 400
+    except KeyError as e:
+        return jsonify({'error': f'Missing required field: {str(e)}'}), 400
+    except Exception as e:
+        print(f"Error generating PPT: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+def _generate_presentation(content, file_name, jain_data=None, persist_download=False):
+    """Generate a PPTX and write the existing analytics records in one transaction."""
+    start_time = time.time()
+    generation = None
+
+    try:
+        if not isinstance(content, dict) or not isinstance(content.get('meta'), dict) or not isinstance(content.get('slides'), list):
+            raise ValueError('Invalid presentation. Provide an object with meta and slides.')
+        if jain_data is not None and not isinstance(jain_data, dict):
+            raise ValueError('jain_data must be an object.')
+
+        safe_name = secure_filename(str(file_name or 'presentation')) or 'presentation'
+        output_filename = f'{safe_name}.pptx'
+
+        # Analyze content for the same tracking fields used by the web endpoint.
+        num_slides = len([s for s in content['slides'] if s.get('type') != 'title'])
+        has_tables = any('table' in str(s.get('blocks', [])).lower() for s in content['slides'])
+        has_images = any('image' in str(s.get('blocks', [])).lower() for s in content['slides'])
+        has_charts = any('chart' in str(s.get('blocks', [])).lower() for s in content['slides'])
+
         generation = Generation(
             file_name=file_name,
             title=content.get('meta', {}).get('title', 'Untitled'),
@@ -952,8 +1006,7 @@ def generate_ppt():
             has_charts=has_charts,
             status='processing'
         )
-        
-        # Add college/academic info if provided
+
         if jain_data and jain_data.get('enabled'):
             generation.college_name = jain_data.get('college_name')
             generation.presentation_title = jain_data.get('title')
@@ -961,101 +1014,334 @@ def generate_ppt():
             generation.course = jain_data.get('course')
             generation.semester = jain_data.get('semester')
             generation.professor_name = jain_data.get('professor')
-        
+
         db.session.add(generation)
-        db.session.flush()  # Get the generation ID
-        
-        # Add student records
+        db.session.flush()
+
         if jain_data and jain_data.get('enabled'):
             if jain_data.get('type') == 'single':
-                student = Student(
+                db.session.add(Student(
                     generation_id=generation.id,
                     name=jain_data.get('student_name', ''),
                     usn=jain_data.get('usn', '')
-                )
-                db.session.add(student)
+                ))
             elif jain_data.get('type') == 'group':
                 for student_data in jain_data.get('students', []):
-                    student = Student(
+                    db.session.add(Student(
                         generation_id=generation.id,
                         name=student_data.get('name', ''),
                         usn=student_data.get('usn', '')
-                    )
-                    db.session.add(student)
-        
-        # Create presentation
-        prs = Presentation()
+                    ))
 
-        # Add college title slide if requested
+        prs = Presentation()
         if jain_data and jain_data.get('enabled'):
             create_college_title_slide(prs, jain_data)
         else:
-            # Standard title slide
             slide = prs.slides.add_slide(prs.slide_layouts[0])
-            slide.shapes.title.text = content["meta"].get("title", "Presentation")
+            slide.shapes.title.text = content['meta'].get('title', 'Presentation')
             if len(slide.placeholders) > 1:
-                slide.placeholders[1].text = content["meta"].get("subtitle", "")
+                slide.placeholders[1].text = content['meta'].get('subtitle', '')
 
-        # Content slides
-        for s in content["slides"]:
-            if s.get("type") == "title":
+        for slide_data in content['slides']:
+            if slide_data.get('type') == 'title':
                 continue
-
             slide = prs.slides.add_slide(prs.slide_layouts[1])
-            slide.shapes.title.text = s.get("title", "Slide")
+            slide.shapes.title.text = slide_data.get('title', 'Slide')
+            if 'subtitle' in slide_data:
+                paragraph = slide.shapes.title.text_frame.add_paragraph()
+                paragraph.text = slide_data['subtitle']
+                paragraph.level = 1
+            render_blocks(slide, slide_data.get('blocks', []))
+            if 'notes' in slide_data:
+                slide.notes_slide.notes_text_frame.text = slide_data['notes']
 
-            if "subtitle" in s:
-                p = slide.shapes.title.text_frame.add_paragraph()
-                p.text = s["subtitle"]
-                p.level = 1
+        output = io.BytesIO()
+        prs.save(output)
+        file_data = output.getvalue()
 
-            render_blocks(slide, s.get("blocks", []))
-
-            if "notes" in s:
-                slide.notes_slide.notes_text_frame.text = s["notes"]
-
-        # Save to temp directory (writable on serverless platforms like Vercel)
-        temp_dir = tempfile.gettempdir()
-        output_filename = f"{secure_filename(file_name)}.pptx"
-        output_path = os.path.join(temp_dir, output_filename)
-        
-        prs.save(output_path)
-        
-        # Update generation record with success info
         generation.status = 'success'
-        generation.file_size = os.path.getsize(output_path)
+        generation.file_size = len(file_data)
         generation.generation_time = time.time() - start_time
+        download_token = None
+        if persist_download:
+            download_token = uuid.uuid4().hex
+            db.session.add(GeneratedFile(
+                token=download_token,
+                generation_id=generation.id,
+                file_name=output_filename,
+                mime_type=PPTX_MIME_TYPE,
+                file_data=file_data
+            ))
         db.session.commit()
-        
-        print(f"✅ PPT generated: {output_path} (tracked in DB)")
-        
-        # Send file and let Flask clean up after response
-        return send_file(output_path, 
-                        as_attachment=True, 
-                        download_name=output_filename,
-                        mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
-    except json.JSONDecodeError as e:
-        if generation:
-            generation.status = 'failed'
-            generation.error_message = f'Invalid JSON: {str(e)}'
-            generation.generation_time = time.time() - start_time
-            db.session.commit()
-        return jsonify({'error': f'Invalid JSON: {str(e)}'}), 400
-    except KeyError as e:
-        if generation:
-            generation.status = 'failed'
-            generation.error_message = f'Missing required field: {str(e)}'
-            generation.generation_time = time.time() - start_time
-            db.session.commit()
-        return jsonify({'error': f'Missing required field: {str(e)}'}), 400
-    except Exception as e:
-        if generation:
-            generation.status = 'failed'
-            generation.error_message = str(e)
-            generation.generation_time = time.time() - start_time
-            db.session.commit()
-        print(f"Error generating PPT: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+
+        return {
+            'file_data': file_data,
+            'file_name': output_filename,
+            'generation_id': generation.id,
+            'download_token': download_token
+        }
+    except Exception as error:
+        if generation is not None:
+            try:
+                generation.status = 'failed'
+                generation.error_message = str(error)
+                generation.generation_time = time.time() - start_time
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        else:
+            db.session.rollback()
+        raise
+
+
+@app.route('/downloads/<string:token>', methods=['GET'])
+def download_generated_file(token):
+    generated_file = db.session.get(GeneratedFile, token)
+    if generated_file is None:
+        abort(404)
+
+    response = send_file(
+        io.BytesIO(generated_file.file_data),
+        as_attachment=True,
+        download_name=generated_file.file_name,
+        mimetype=generated_file.mime_type
+    )
+    response.headers['Cache-Control'] = 'private, no-store'
+    return response
+
+
+def _mcp_tool_definition():
+    return {
+        'name': 'generate_ppt',
+        'title': 'Generate a PowerPoint presentation',
+        'description': (
+            'Create a PowerPoint file from presentation JSON. The tool stores the same generation and student '
+            'analytics as the web app, then returns a direct download link.'
+        ),
+        'inputSchema': {
+            'type': 'object',
+            'properties': {
+                'file_name': {
+                    'type': 'string',
+                    'description': 'Download filename without the .pptx extension.',
+                    'default': 'presentation'
+                },
+                'presentation': {
+                    'type': 'object',
+                    'description': 'Presentation document with meta and slides, matching the web app JSON format.',
+                    'required': ['meta', 'slides'],
+                    'properties': {
+                        'meta': {'type': 'object', 'additionalProperties': True},
+                        'slides': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': True}}
+                    },
+                    'additionalProperties': True
+                },
+                'jain_data': {
+                    'type': 'object',
+                    'description': 'Optional academic title-slide details in the same format as /generate_ppt.',
+                    'additionalProperties': True
+                }
+            },
+            'required': ['presentation'],
+            'additionalProperties': False
+        }
+    }
+
+
+def _mcp_jsonrpc_error(request_id, code, message, http_status=200, data=None):
+    error = {'code': code, 'message': message}
+    if data is not None:
+        error['data'] = data
+    return jsonify({'jsonrpc': '2.0', 'id': request_id, 'error': error}), http_status
+
+
+def _mcp_jsonrpc_result(request_id, result, modern=False):
+    if modern:
+        result['_meta'] = {'io.modelcontextprotocol/serverInfo': {'name': 'ppt-generator', 'version': '1.0.0'}}
+    return jsonify({'jsonrpc': '2.0', 'id': request_id, 'result': result})
+
+
+def _decode_mcp_header_value(value):
+    if value and value.startswith('=?base64?') and value.endswith('?='):
+        import base64
+        return base64.b64decode(value[9:-2], validate=True).decode('utf-8')
+    return value
+
+
+def _validate_mcp_image_paths(content):
+    """Only allow MCP-generated decks to embed images from this app's static folder."""
+    static_root = os.path.realpath(os.path.join(app.root_path, 'static'))
+    for slide_data in content.get('slides', []):
+        for block in slide_data.get('blocks', []):
+            if block.get('kind') != 'images':
+                continue
+            for image in block.get('items', []):
+                path = image.get('path', '')
+                resolved_path = os.path.realpath(os.path.join(app.root_path, path))
+                if not path or os.path.commonpath([static_root, resolved_path]) != static_root or not os.path.isfile(resolved_path):
+                    raise ValueError('MCP presentations may only use image files that already exist under static/.')
+
+
+def _build_download_url(token):
+    path = url_for('download_generated_file', token=token)
+    public_base_url = os.getenv('PUBLIC_BASE_URL', '').strip().rstrip('/')
+    if public_base_url:
+        from urllib.parse import urlsplit
+        parsed = urlsplit(public_base_url)
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+            raise ValueError('PUBLIC_BASE_URL must be an absolute http(s) URL.')
+        return f'{public_base_url}{path}'
+    request_base_url = request.url_root.rstrip('/')
+    return f'{request_base_url}{path}'
+
+
+@app.route('/mcp', methods=['POST', 'GET', 'DELETE'])
+def mcp_endpoint():
+    """Stateless Streamable HTTP MCP endpoint for current and 2025 clients."""
+    origin = request.headers.get('Origin')
+    if origin and not (is_allowed_mcp_origin(origin) or is_allowed_origin(origin)):
+        return jsonify({'error': 'Origin not allowed'}), 403
+    if request.method != 'POST':
+        # The server does not initiate messages, so it has no standalone SSE stream or session to close.
+        response = jsonify({'error': 'This stateless MCP endpoint supports POST requests only.'})
+        response.status_code = 405
+        response.headers['Allow'] = 'POST'
+        return response
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 415
+
+    message = request.get_json(silent=True)
+    if not isinstance(message, dict):
+        return _mcp_jsonrpc_error(None, -32600, 'Invalid JSON-RPC request.', 400)
+
+    request_id = message.get('id')
+    method = message.get('method')
+    params = message.get('params') or {}
+    if message.get('jsonrpc') != '2.0' or not isinstance(method, str) or not isinstance(params, dict):
+        return _mcp_jsonrpc_error(request_id, -32600, 'Invalid JSON-RPC request.', 400)
+
+    protocol_header = request.headers.get('MCP-Protocol-Version')
+    metadata_version = (params.get('_meta') or {}).get('io.modelcontextprotocol/protocolVersion')
+    if protocol_header and metadata_version and protocol_header != metadata_version:
+        return _mcp_jsonrpc_error(request_id, -32020, 'MCP-Protocol-Version header does not match request metadata.', 400)
+    protocol_version = protocol_header or metadata_version or '2025-03-26'
+    if protocol_version not in MCP_SUPPORTED_PROTOCOL_VERSIONS:
+        return _mcp_jsonrpc_error(
+            request_id,
+            -32022,
+            'Unsupported protocol version.',
+            400,
+            {'supported': sorted(MCP_MODERN_PROTOCOL_VERSIONS), 'requested': protocol_version}
+        )
+
+    modern = protocol_version in MCP_MODERN_PROTOCOL_VERSIONS
+    if modern:
+        meta = params.get('_meta') or {}
+        if not protocol_header or protocol_header != meta.get('io.modelcontextprotocol/protocolVersion'):
+            return _mcp_jsonrpc_error(request_id, -32020, 'MCP-Protocol-Version header does not match request metadata.', 400)
+        header_method = request.headers.get('Mcp-Method')
+        if header_method != method:
+            return _mcp_jsonrpc_error(request_id, -32020, 'Mcp-Method header does not match request method.', 400)
+        if method == 'tools/call':
+            header_name = request.headers.get('Mcp-Name')
+            try:
+                header_name = _decode_mcp_header_value(header_name)
+            except (ValueError, UnicodeDecodeError):
+                return _mcp_jsonrpc_error(request_id, -32020, 'Invalid Mcp-Name header value.', 400)
+            if header_name != params.get('name'):
+                return _mcp_jsonrpc_error(request_id, -32020, 'Mcp-Name header does not match tool name.', 400)
+    # Notifications do not have an id and receive an empty 202 response.
+    if 'id' not in message:
+        if method.startswith('notifications/'):
+            return Response(status=202)
+        return Response(status=202)
+
+    if method == 'server/discover' and modern:
+        return _mcp_jsonrpc_result(request_id, {
+            'resultType': 'complete',
+            'supportedVersions': sorted(MCP_MODERN_PROTOCOL_VERSIONS),
+            'capabilities': {'tools': {}},
+            'instructions': 'Use generate_ppt with a meta/slides presentation object. The tool returns a direct PPTX download link.'
+        }, modern=True)
+    if method == 'initialize' and not modern:
+        requested_version = params.get('protocolVersion')
+        negotiated_version = requested_version if requested_version in MCP_LEGACY_PROTOCOL_VERSIONS else MCP_LATEST_LEGACY_PROTOCOL_VERSION
+        return jsonify({
+            'jsonrpc': '2.0',
+            'id': request_id,
+            'result': {
+                'protocolVersion': negotiated_version,
+                'capabilities': {'tools': {'listChanged': False}},
+                'serverInfo': {'name': 'ppt-generator', 'version': '1.0.0'},
+                'instructions': 'Use generate_ppt with a meta/slides presentation object. The tool returns a direct PPTX download link.'
+            }
+        })
+    if method == 'ping':
+        return _mcp_jsonrpc_result(request_id, {}, modern=modern)
+    if method == 'tools/list':
+        return _mcp_jsonrpc_result(request_id, {'tools': [_mcp_tool_definition()]}, modern=modern)
+    if method == 'tools/call':
+        if params.get('name') != 'generate_ppt':
+            return _mcp_jsonrpc_error(request_id, -32602, 'Unknown tool name.')
+        arguments = params.get('arguments') or {}
+        if not isinstance(arguments, dict):
+            return _mcp_jsonrpc_error(request_id, -32602, 'Tool arguments must be an object.')
+        presentation = arguments.get('presentation')
+        if presentation is None and isinstance(arguments.get('json_data'), str):
+            try:
+                presentation = json.loads(arguments['json_data'])
+            except json.JSONDecodeError as error:
+                return jsonify({
+                    'jsonrpc': '2.0',
+                    'id': request_id,
+                    'result': {'isError': True, 'content': [{'type': 'text', 'text': f'Invalid presentation JSON: {error}'}]}
+                })
+        if not isinstance(presentation, dict) or not isinstance(presentation.get('meta'), dict) or not isinstance(presentation.get('slides'), list):
+            return jsonify({
+                'jsonrpc': '2.0',
+                'id': request_id,
+                'result': {'isError': True, 'content': [{'type': 'text', 'text': 'presentation must be an object with a meta object and slides array.'}]}
+            })
+        try:
+            _validate_mcp_image_paths(presentation)
+            # Validate the public URL configuration before committing a generated file.
+            _build_download_url('download-url-validation')
+            generated = _generate_presentation(
+                presentation,
+                arguments.get('file_name', 'presentation'),
+                arguments.get('jain_data'),
+                persist_download=True
+            )
+            download_url = _build_download_url(generated['download_token'])
+            result = {
+                'generation_id': generated['generation_id'],
+                'file_name': generated['file_name'],
+                'download_url': download_url,
+                'download_markdown': f"[Download {generated['file_name']}]({download_url})"
+            }
+            return _mcp_jsonrpc_result(request_id, {
+                'content': [
+                    {'type': 'text', 'text': f"PowerPoint generated and saved.\n\n{result['download_markdown']}"},
+                    {
+                        'type': 'resource_link',
+                        'uri': download_url,
+                        'name': generated['file_name'],
+                        'mimeType': PPTX_MIME_TYPE,
+                        'description': 'Download the generated PowerPoint presentation.'
+                    }
+                ],
+                'structuredContent': result,
+                'isError': False
+            }, modern=modern)
+        except Exception as error:
+            db.session.rollback()
+            return jsonify({
+                'jsonrpc': '2.0',
+                'id': request_id,
+                'result': {'isError': True, 'content': [{'type': 'text', 'text': f'Could not generate the PowerPoint: {error}'}]}
+            })
+
+    return _mcp_jsonrpc_error(request_id, -32601, f'Method not found: {method}', 404)
 
 
 # Feedback endpoints

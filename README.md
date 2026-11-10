@@ -25,6 +25,7 @@ A Flask-based web application that generates PowerPoint presentations from JSON 
 ### Core Features
 - 🎨 **Web Interface**: User-friendly web UI for generating presentations
 - 📝 **JSON-Driven**: Define your entire presentation structure in JSON
+- 🔌 **Remote MCP Server**: Connect ChatGPT, Claude, and other MCP clients to generate presentations and receive a direct download link
 - 🤖 **AI Helper**: Dynamic prompt generator - enter topic and number of slides, get customized prompt for ChatGPT/Claude
 - 🎓 **College/University Support**: Customizable title slides for academic presentations
   - Works with any college or university
@@ -308,7 +309,10 @@ You can configure the application using environment variables:
 export FLASK_APP=main.py
 export FLASK_ENV=development  # or production
 export PORT=5000              # Default port
+export PUBLIC_BASE_URL=https://your-domain.example  # Public URL used in MCP download links
 ```
+
+For browser-based MCP clients, optionally set `MCP_ALLOWED_ORIGINS` to a comma-separated list of exact origins. ChatGPT and Claude web origins are allowed by default. The `/mcp` endpoint reuses the same generation and analytics flow as the web app; MCP PPTX artifacts are stored in the configured SQL database so their download links work across app workers and restarts.
 
 ### Production Deployment
 
@@ -342,6 +346,32 @@ Generate a PowerPoint presentation.
 **Response:**
 - Success: PowerPoint file download
 - Error: JSON with error message and status code
+
+### `POST /mcp`
+
+Stateless Streamable HTTP MCP endpoint. Connect an online MCP client to `https://your-domain.example/mcp`, then call the `generate_ppt` tool with a `presentation` object containing `meta` and `slides`. It returns a download link and a structured result containing the file name, generation ID, and URL. MCP generations are recorded in the existing generations/students tables; downloadable PPTX files are persisted in the additive `generated_files` table.
+
+The generated link uses `PUBLIC_BASE_URL` when configured. Set this to the externally reachable HTTPS base URL when running behind a reverse proxy or hosting platform. The download remains available while its database record is retained.
+
+Example tool arguments:
+
+```json
+{
+  "file_name": "quarterly-review",
+  "presentation": {
+    "meta": {"title": "Quarterly Review", "subtitle": "Q3 results"},
+    "slides": [
+      {
+        "type": "content",
+        "title": "Highlights",
+        "blocks": [{"kind": "bullets", "items": ["Revenue grew 12%", "Retention improved"]}]
+      }
+    ]
+  }
+}
+```
+
+The endpoint accepts MCP 2025 Streamable HTTP clients and the 2026-07-28 request-metadata format. Configure a persistent `DATABASE_URL` for hosted deployments so analytics and generated downloads survive restarts. The existing Docker Compose setup stores both in the mounted `instance` database.
 
 ## 🧪 Example
 
