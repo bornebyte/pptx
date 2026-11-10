@@ -5,6 +5,8 @@ import os
 import time
 import uuid
 from datetime import datetime, date
+from urllib.parse import urlsplit
+from PIL import Image
 from flask import Flask, render_template, request, send_file, jsonify, redirect, url_for, Response, abort
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -45,6 +47,65 @@ MCP_MODERN_PROTOCOL_VERSIONS = {'2026-07-28'}
 MCP_SUPPORTED_PROTOCOL_VERSIONS = MCP_LEGACY_PROTOCOL_VERSIONS | MCP_MODERN_PROTOCOL_VERSIONS
 MCP_LATEST_LEGACY_PROTOCOL_VERSION = '2025-11-25'
 PPTX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+MCP_ICON_PATH = os.path.join(PROJECT_ROOT, 'src', 'static', 'favicon.png')
+MCP_ICON_MAX_BYTES = 1024 * 1024
+MCP_CACHE_TTL_MS = 60 * 60 * 1000
+
+
+def _mcp_public_base_url():
+    """Return the configured HTTPS origin used in public MCP metadata."""
+    base_url = os.getenv('PUBLIC_BASE_URL', '').strip().rstrip('/')
+    if not base_url:
+        return None
+    try:
+        parsed = urlsplit(base_url)
+        valid_port = parsed.port is None or 1 <= parsed.port <= 65535
+    except ValueError:
+        return None
+    if (parsed.scheme != 'https' or not parsed.hostname or not valid_port or parsed.username or parsed.password
+            or parsed.path not in {'', '/'} or parsed.query or parsed.fragment):
+        return None
+    return base_url
+
+
+def _mcp_icons():
+    base_url = _mcp_public_base_url()
+    if not base_url or not _validate_mcp_icon():
+        return None
+    return [{
+        'src': f'{base_url}/mcp/icon.png',
+        'mimeType': 'image/png',
+        'sizes': ['128x128'],
+    }]
+
+
+def _mcp_server_info(include_extended=True):
+    info = {'name': 'ppt-generator', 'version': '1.0.0'}
+    if not include_extended:
+        return info
+    info.update({
+        'title': 'PowerPoint Generator',
+        'description': 'Generate PowerPoint presentations from structured content.',
+    })
+    base_url = _mcp_public_base_url()
+    if base_url:
+        info['websiteUrl'] = base_url
+        info['icons'] = _mcp_icons()
+    return info
+
+
+def _validate_mcp_icon(path=MCP_ICON_PATH):
+    """Validate the bundled public MCP icon as a small, decoded 128px PNG."""
+    try:
+        if os.path.getsize(path) > MCP_ICON_MAX_BYTES:
+            return False
+        with Image.open(path) as icon:
+            if icon.format != 'PNG' or icon.size != (128, 128):
+                return False
+            icon.verify()
+        return True
+    except (OSError, ValueError):
+        return False
 
 def is_allowed_origin(origin):
     if not origin:
@@ -1114,7 +1175,7 @@ def download_generated_file(token):
     return response
 
 
-def _mcp_tool_definition():
+def _mcp_tool_definition(include_icons=True):
     block_schema = {
         'type': 'object',
         'required': ['kind'],
@@ -1130,7 +1191,7 @@ def _mcp_tool_definition():
         },
         'additionalProperties': True
     }
-    return {
+    tool = {
         'name': 'generate_ppt',
         'title': 'Generate a PowerPoint presentation',
         'description': (
@@ -1213,6 +1274,10 @@ def _mcp_tool_definition():
             'additionalProperties': False
         }
     }
+    icons = _mcp_icons() if include_icons else None
+    if icons:
+        tool['icons'] = icons
+    return tool
 
 
 def _mcp_jsonrpc_error(request_id, code, message, http_status=200, data=None):
@@ -1224,7 +1289,11 @@ def _mcp_jsonrpc_error(request_id, code, message, http_status=200, data=None):
 
 def _mcp_jsonrpc_result(request_id, result, modern=False):
     if modern:
-        result['_meta'] = {'io.modelcontextprotocol/serverInfo': {'name': 'ppt-generator', 'version': '1.0.0'}}
+        result.setdefault('resultType', 'complete')
+        result.setdefault('_meta', {})['io.modelcontextprotocol/serverInfo'] = _mcp_server_info()
+        if 'tools' in result:
+            result.setdefault('ttlMs', MCP_CACHE_TTL_MS)
+            result.setdefault('cacheScope', 'public')
     return jsonify({'jsonrpc': '2.0', 'id': request_id, 'result': result})
 
 
@@ -1419,6 +1488,23 @@ def _build_download_url(token):
     return f'{request_base_url}{path}'
 
 
+@app.route('/mcp/icon.png', methods=['GET', 'HEAD'])
+def mcp_server_icon():
+    """Serve the public MCP brand icon without requiring MCP/OAuth credentials."""
+    if not _validate_mcp_icon():
+        abort(404)
+    response = send_file(
+        MCP_ICON_PATH,
+        mimetype='image/png',
+        conditional=True,
+        max_age=86400,
+    )
+    response.headers['Cache-Control'] = 'public, max-age=86400, stale-while-revalidate=604800'
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
 @app.route('/mcp', methods=['POST', 'GET', 'DELETE'])
 def mcp_endpoint():
     """Stateless Streamable HTTP MCP endpoint for current and 2025 clients."""
@@ -1494,7 +1580,9 @@ def mcp_endpoint():
                 'For every requested content slide, supply at least one substantive paragraph, bullet list, table, '
                 'or other supported block; do not create title-only slides. If the user provides college or student '
                 'details, pass them as academic_details with enabled=true and type=single unless a group is explicitly requested.'
-            )
+            ),
+            'ttlMs': MCP_CACHE_TTL_MS,
+            'cacheScope': 'public',
         }, modern=True)
     if method == 'initialize' and not modern:
         requested_version = params.get('protocolVersion')
@@ -1505,7 +1593,7 @@ def mcp_endpoint():
             'result': {
                 'protocolVersion': negotiated_version,
                 'capabilities': {'tools': {'listChanged': False}},
-                'serverInfo': {'name': 'ppt-generator', 'version': '1.0.0'},
+                'serverInfo': _mcp_server_info(negotiated_version == MCP_LATEST_LEGACY_PROTOCOL_VERSION),
                 'instructions': (
                     'For every requested content slide, supply at least one substantive paragraph, bullet list, table, '
                     'or other supported block; do not create title-only slides. If the user provides college or student '
@@ -1516,7 +1604,8 @@ def mcp_endpoint():
     if method == 'ping':
         return _mcp_jsonrpc_result(request_id, {}, modern=modern)
     if method == 'tools/list':
-        return _mcp_jsonrpc_result(request_id, {'tools': [_mcp_tool_definition()]}, modern=modern)
+        supports_icons = modern or protocol_version == MCP_LATEST_LEGACY_PROTOCOL_VERSION
+        return _mcp_jsonrpc_result(request_id, {'tools': [_mcp_tool_definition(supports_icons)]}, modern=modern)
     if method == 'tools/call':
         if params.get('name') != 'generate_ppt':
             return _mcp_jsonrpc_error(request_id, -32602, 'Unknown tool name.')

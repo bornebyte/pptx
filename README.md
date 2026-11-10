@@ -79,6 +79,8 @@ The `generate_ppt` tool accepts a `presentation` object with `meta` and `slides`
 
 The endpoint supports 2025 Streamable HTTP clients and the 2026-07-28 request-metadata format. MCP generations and download links persist across restarts when `DATABASE_URL` points to a persistent database.
 
+The MCP server advertises its public PNG icon and standardized metadata to protocol versions that support icons. Set `PUBLIC_BASE_URL` to the public HTTPS origin so MCP clients can fetch the icon at `/mcp/icon.png`. Client rendering varies; see [MCP icons and metadata](docs/mcp-icons.md) for verified provider differences and manual setup notes.
+
 ## Configuration and Deployment
 
 Copy `.env.example` to `.env` and update the values for your environment. Important settings:
