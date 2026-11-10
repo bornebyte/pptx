@@ -967,6 +967,8 @@ def generate_ppt():
         )
     except json.JSONDecodeError as e:
         return jsonify({'error': f'Invalid JSON: {str(e)}'}), 400
+    except PresentationValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except KeyError as e:
         return jsonify({'error': f'Missing required field: {str(e)}'}), 400
     except Exception as e:
@@ -982,6 +984,7 @@ def _generate_presentation(content, file_name, jain_data=None, persist_download=
     try:
         if not isinstance(content, dict) or not isinstance(content.get('meta'), dict) or not isinstance(content.get('slides'), list):
             raise ValueError('Invalid presentation. Provide an object with meta and slides.')
+        _normalize_presentation_slides(content)
         if jain_data is not None and not isinstance(jain_data, dict):
             raise ValueError('jain_data must be an object.')
 
@@ -1111,12 +1114,32 @@ def download_generated_file(token):
 
 
 def _mcp_tool_definition():
+    block_schema = {
+        'type': 'object',
+        'required': ['kind'],
+        'properties': {
+            'kind': {
+                'type': 'string',
+                'enum': ['heading', 'paragraph', 'bullets', 'numbered_list', 'table', 'text_box', 'images']
+            },
+            'text': {'type': 'string'},
+            'items': {'type': 'array', 'minItems': 1},
+            'rows': {'type': 'array', 'minItems': 1},
+            'layout': {'type': 'string', 'enum': ['row', 'column', 'grid']}
+        },
+        'additionalProperties': True
+    }
     return {
         'name': 'generate_ppt',
         'title': 'Generate a PowerPoint presentation',
         'description': (
-            'Create a PowerPoint file from presentation JSON. The tool stores the same generation and student '
-            'analytics as the web app, then returns a direct download link.'
+            'Create a complete PowerPoint from the user request. Every content slide must contain at least one '
+            'substantive paragraph, bullet list, table, or other supported content block; never send title-only '
+            'slides. If the request includes a university, college, student, course, semester, USN, or professor, '
+            'pass those details in academic_details and enable the academic title slide. Use single-student mode '
+            'for one presenter; use group mode only when multiple presenters or a group project are explicitly requested. '
+            'If the user asks for N total slides and an academic cover is enabled, create N-1 content slides so the final deck has N slides. '
+            'Returns a direct download link and stores the usual generation analytics.'
         ),
         'inputSchema': {
             'type': 'object',
@@ -1128,17 +1151,60 @@ def _mcp_tool_definition():
                 },
                 'presentation': {
                     'type': 'object',
-                    'description': 'Presentation document with meta and slides, matching the web app JSON format.',
+                    'description': 'Presentation document. Give every content slide substantive body content in blocks; a title alone is not a complete slide.',
                     'required': ['meta', 'slides'],
                     'properties': {
                         'meta': {'type': 'object', 'additionalProperties': True},
-                        'slides': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': True}}
+                        'slides': {
+                            'type': 'array',
+                            'minItems': 1,
+                            'items': {
+                                'type': 'object',
+                                'required': ['title', 'blocks'],
+                                'properties': {
+                                    'type': {'type': 'string', 'enum': ['content']},
+                                    'title': {'type': 'string', 'minLength': 1},
+                                    'subtitle': {'type': 'string'},
+                                    'blocks': {'type': 'array', 'minItems': 1, 'items': block_schema},
+                                    'notes': {'type': 'string'}
+                                },
+                                'additionalProperties': True
+                            }
+                        }
+                    },
+                    'additionalProperties': True
+                },
+                'academic_details': {
+                    'type': 'object',
+                    'description': (
+                        'Use when the user mentions academic details. Set enabled=true and include the college, '
+                        'student name, USN, course, semester, and professor that were provided. Set type=single '
+                        'for one presenter (the default); set type=group only for multiple presenters or an explicitly requested group project.'
+                    ),
+                    'properties': {
+                        'enabled': {'type': 'boolean', 'description': 'True when an academic title slide was requested or academic details were provided.'},
+                        'type': {'type': 'string', 'enum': ['single', 'group'], 'description': 'Use single unless a group project or multiple presenters were explicitly requested.'},
+                        'college_name': {'type': 'string'},
+                        'title': {'type': 'string', 'description': 'Presentation title shown on the academic title slide.'},
+                        'student_name': {'type': 'string'},
+                        'usn': {'type': 'string'},
+                        'course': {'type': 'string'},
+                        'semester': {'type': 'string'},
+                        'professor': {'type': 'string'},
+                        'students': {
+                            'type': 'array',
+                            'items': {
+                                'type': 'object',
+                                'properties': {'name': {'type': 'string'}, 'usn': {'type': 'string'}},
+                                'additionalProperties': False
+                            }
+                        }
                     },
                     'additionalProperties': True
                 },
                 'jain_data': {
                     'type': 'object',
-                    'description': 'Optional academic title-slide details in the same format as /generate_ppt.',
+                    'description': 'Backward-compatible alias for academic_details.',
                     'additionalProperties': True
                 }
             },
@@ -1166,6 +1232,163 @@ def _decode_mcp_header_value(value):
         import base64
         return base64.b64decode(value[9:-2], validate=True).decode('utf-8')
     return value
+
+
+def _normalize_academic_details(arguments, presentation):
+    details = arguments.get('academic_details')
+    if details is None:
+        details = arguments.get('jain_data')
+    academic_details_were_provided = details is not None
+
+    meta = presentation.get('meta', {})
+    if not isinstance(meta, dict):
+        meta = {}
+    has_academic_metadata = any(meta.get(field) for field in (
+        'college_name', 'institution', 'university', 'student_name', 'usn', 'course',
+        'semester', 'professor', 'professor_name', 'submitted_to', 'students'
+    ))
+    if details is None:
+        details = {}
+    if not isinstance(details, dict):
+        raise ValueError('academic_details must be an object.')
+
+    details = dict(details)
+    student = details.get('student')
+    if isinstance(student, dict):
+        details['student_name'] = details.get('student_name') or student.get('name', '')
+        details['usn'] = details.get('usn') or student.get('usn', '')
+    details['college_name'] = (
+        details.get('college_name') or details.get('university') or details.get('institution') or
+        meta.get('college_name') or meta.get('institution') or meta.get('university') or ''
+    )
+    details['student_name'] = (
+        details.get('student_name') or details.get('presenter') or details.get('author') or
+        meta.get('student_name') or meta.get('presenter') or
+        (meta.get('author') if academic_details_were_provided or has_academic_metadata else '') or ''
+    )
+    details['usn'] = details.get('usn') or meta.get('usn') or ''
+    details['course'] = details.get('course') or meta.get('course') or ''
+    details['semester'] = details.get('semester') or meta.get('semester') or ''
+    details['professor'] = (
+        details.get('professor') or details.get('professor_name') or details.get('submitted_to') or
+        meta.get('professor') or meta.get('professor_name') or meta.get('submitted_to') or ''
+    )
+    if not details.get('students') and isinstance(meta.get('students'), list):
+        details['students'] = meta['students']
+    details['title'] = details.get('title') or meta.get('title', '')
+
+    enabled = details.get('enabled')
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in {'true', '1', 'yes', 'on'}
+    elif enabled is None:
+        enabled = any(details.get(field) for field in (
+            'college_name', 'student_name', 'usn', 'course', 'semester', 'professor', 'students'
+        ))
+    details['enabled'] = bool(enabled)
+    if not details['enabled']:
+        return details
+
+    students = details.get('students') or []
+    if not isinstance(students, list):
+        raise ValueError('academic_details.students must be an array.')
+    requested_type = details.get('type') or details.get('student_type')
+    if requested_type is None:
+        requested_type = 'group' if len(students) > 1 else 'single'
+    requested_type = str(requested_type).lower()
+    if requested_type not in {'single', 'group'}:
+        raise ValueError('academic_details.type must be single or group.')
+    details['type'] = requested_type
+    return details
+
+
+class PresentationValidationError(ValueError):
+    """Raised when presentation input would create incomplete or empty slides."""
+
+
+def _normalize_presentation_slides(presentation):
+    """Accept common slide-body aliases, then reject slides that would render blank."""
+    supported_kinds = {
+        'heading', 'paragraph', 'bullets', 'numbered_list', 'table', 'text_box', 'images'
+    }
+    aliases = {
+        'text': 'paragraph',
+        'bullet_list': 'bullets',
+        'bullet_points': 'bullets',
+        'list': 'bullets'
+    }
+
+    def has_text(value):
+        if isinstance(value, dict):
+            return bool(str(value.get('text', '')).strip())
+        return bool(str(value or '').strip())
+
+    def block_has_content(block):
+        kind = block.get('kind')
+        if kind in {'paragraph', 'text_box'}:
+            return has_text(block.get('text'))
+        if kind in {'bullets', 'numbered_list'}:
+            return isinstance(block.get('items'), list) and any(has_text(item) for item in block['items'])
+        if kind == 'table':
+            return isinstance(block.get('rows'), list) and any(
+                has_text(cell) for row in block['rows'] if isinstance(row, list) for cell in row
+            )
+        if kind == 'images':
+            return isinstance(block.get('items'), list) and bool(block['items'])
+        return False
+
+    content_slide_count = 0
+    for slide_number, slide in enumerate(presentation.get('slides', []), 1):
+        if not isinstance(slide, dict):
+            raise PresentationValidationError(f'Slide {slide_number} must be an object.')
+        if slide.get('type') == 'title':
+            continue
+        content_slide_count += 1
+        if not str(slide.get('title') or '').strip():
+            raise PresentationValidationError(f'Slide {slide_number} is missing a title.')
+
+        blocks = slide.get('blocks')
+        if not blocks:
+            body = slide.get('content') or slide.get('body') or slide.get('text')
+            if isinstance(body, str) and body.strip():
+                blocks = [{'kind': 'paragraph', 'text': body}]
+            elif isinstance(body, list) and body:
+                if all(isinstance(item, str) for item in body):
+                    blocks = [{'kind': 'bullets', 'items': body}]
+                else:
+                    blocks = body
+            else:
+                points = slide.get('bullet_points') or slide.get('key_points') or slide.get('bullets') or slide.get('points')
+                if isinstance(points, list) and points:
+                    blocks = [{'kind': 'bullets', 'items': points}]
+
+        if not isinstance(blocks, list):
+            raise PresentationValidationError(f'Slide {slide_number} blocks must be an array.')
+
+        normalized_blocks = []
+        for block in blocks:
+            if isinstance(block, str):
+                block = {'kind': 'paragraph', 'text': block}
+            if not isinstance(block, dict):
+                raise PresentationValidationError(f'Slide {slide_number} contains a content block that is not an object.')
+            block = dict(block)
+            kind = block.get('kind') or block.get('type')
+            if not kind and has_text(block.get('text')):
+                kind = 'paragraph'
+            kind = aliases.get(str(kind).lower(), str(kind).lower()) if kind else ''
+            if kind not in supported_kinds:
+                raise PresentationValidationError(f'Slide {slide_number} has unsupported content block kind: {kind or "(missing)"}.')
+            block['kind'] = kind
+            normalized_blocks.append(block)
+
+        if not any(block_has_content(block) for block in normalized_blocks):
+            title = slide.get('title') or f'Slide {slide_number}'
+            raise PresentationValidationError(
+                f'"{title}" has no visible body content. Add at least one paragraph, bullet list, table, or other supported block; do not submit title-only slides.'
+            )
+        slide['blocks'] = normalized_blocks
+
+    if not content_slide_count:
+        raise PresentationValidationError('Add at least one content slide with a title and body blocks.')
 
 
 def _validate_mcp_image_paths(content):
@@ -1207,10 +1430,15 @@ def mcp_endpoint():
         response.status_code = 405
         response.headers['Allow'] = 'POST'
         return response
-    if not request.is_json:
-        return jsonify({'error': 'Content-Type must be application/json'}), 415
-
     message = request.get_json(silent=True)
+    if message is None:
+        # Some remote MCP clients send valid JSON-RPC with a nonstandard or missing
+        # Content-Type. Parse the body so those clients receive a protocol response
+        # instead of Flask's unsupported-media-type rejection.
+        try:
+            message = json.loads(request.get_data(cache=True))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            message = None
     if not isinstance(message, dict):
         return _mcp_jsonrpc_error(None, -32600, 'Invalid JSON-RPC request.', 400)
 
@@ -1261,7 +1489,11 @@ def mcp_endpoint():
             'resultType': 'complete',
             'supportedVersions': sorted(MCP_MODERN_PROTOCOL_VERSIONS),
             'capabilities': {'tools': {}},
-            'instructions': 'Use generate_ppt with a meta/slides presentation object. The tool returns a direct PPTX download link.'
+            'instructions': (
+                'For every requested content slide, supply at least one substantive paragraph, bullet list, table, '
+                'or other supported block; do not create title-only slides. If the user provides college or student '
+                'details, pass them as academic_details with enabled=true and type=single unless a group is explicitly requested.'
+            )
         }, modern=True)
     if method == 'initialize' and not modern:
         requested_version = params.get('protocolVersion')
@@ -1273,7 +1505,11 @@ def mcp_endpoint():
                 'protocolVersion': negotiated_version,
                 'capabilities': {'tools': {'listChanged': False}},
                 'serverInfo': {'name': 'ppt-generator', 'version': '1.0.0'},
-                'instructions': 'Use generate_ppt with a meta/slides presentation object. The tool returns a direct PPTX download link.'
+                'instructions': (
+                    'For every requested content slide, supply at least one substantive paragraph, bullet list, table, '
+                    'or other supported block; do not create title-only slides. If the user provides college or student '
+                    'details, pass them as academic_details with enabled=true and type=single unless a group is explicitly requested.'
+                )
             }
         })
     if method == 'ping':
@@ -1303,13 +1539,14 @@ def mcp_endpoint():
                 'result': {'isError': True, 'content': [{'type': 'text', 'text': 'presentation must be an object with a meta object and slides array.'}]}
             })
         try:
+            academic_details = _normalize_academic_details(arguments, presentation)
             _validate_mcp_image_paths(presentation)
             # Validate the public URL configuration before committing a generated file.
             _build_download_url('download-url-validation')
             generated = _generate_presentation(
                 presentation,
                 arguments.get('file_name', 'presentation'),
-                arguments.get('jain_data'),
+                academic_details,
                 persist_download=True
             )
             download_url = _build_download_url(generated['download_token'])
@@ -1317,7 +1554,9 @@ def mcp_endpoint():
                 'generation_id': generated['generation_id'],
                 'file_name': generated['file_name'],
                 'download_url': download_url,
-                'download_markdown': f"[Download {generated['file_name']}]({download_url})"
+                'download_markdown': f"[Download {generated['file_name']}]({download_url})",
+                'academic_title_slide': bool(academic_details and academic_details.get('enabled')),
+                'student_type': academic_details.get('type') if academic_details and academic_details.get('enabled') else None
             }
             return _mcp_jsonrpc_result(request_id, {
                 'content': [

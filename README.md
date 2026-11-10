@@ -70,7 +70,9 @@ Deploy this app to a publicly reachable HTTPS host, then connect an MCP client t
 https://your-domain.example/mcp
 ```
 
-The `generate_ppt` tool accepts a `presentation` object with `meta` and `slides`, plus an optional `file_name` and `jain_data`. It returns a download link and generation ID. MCP requests use the same generation and student analytics records as web requests. The PPTX is stored in the `generated_files` database table and downloaded from `/downloads/<token>`.
+In ChatGPT, choose **No authentication** for this server. The current endpoint is unauthenticated and does not implement OAuth; OAuth metadata discovery URLs therefore return 404. `ADMIN_API_KEY` only protects admin analytics APIs, not `/mcp`.
+
+The `generate_ppt` tool accepts a `presentation` object with `meta` and `slides`, plus optional `file_name` and `academic_details`. Every content slide must have a title and at least one substantive body block. When academic details are supplied, the title slide is enabled automatically and defaults to single-student mode; group mode is used only when explicitly requested or multiple presenters are supplied. A requested total slide count includes the cover slide. The tool returns a download link and generation ID. MCP requests use the same generation and student analytics records as web requests. The PPTX is stored in the `generated_files` database table and downloaded from `/downloads/<token>`.
 
 The endpoint supports 2025 Streamable HTTP clients and the 2026-07-28 request-metadata format. MCP generations and download links persist across restarts when `DATABASE_URL` points to a persistent database.
 
