@@ -34,7 +34,7 @@ python main.py
 
 On Windows, activate with `.venv\Scripts\activate` (PowerShell) or `.venv\Scripts\activate.bat` (Command Prompt), then run the same `pip` and Python commands.
 
-Open <http://localhost:5000>. The app uses `content.json` as its example presentation. The `pptgen`, `pptgen.bat`, and `pptgen-launcher.py` launchers are also available.
+Open <http://localhost:5000>. Application code, templates, and static assets live under `src/`; the default and enhanced example presentations are in `src/examples/`. The root `main.py` is a compatibility entry point for Vercel and existing launch commands. The `pptgen`, `pptgen.bat`, and `pptgen-launcher.py` launchers are also available. Setup and maintenance utilities live under `scripts/`.
 
 ## Create a Presentation
 
@@ -60,7 +60,7 @@ In the web interface, paste presentation JSON, enter a file name, and select **G
 }
 ```
 
-Supported content block kinds include `heading`, `paragraph`, `bullets`, `numbered_list`, `table`, `text_box`, and `images`. See `example_enhanced.json` for a larger example.
+Supported content block kinds include `heading`, `paragraph`, `bullets`, `numbered_list`, `table`, `text_box`, and `images`. See [the enhanced example](src/examples/example_enhanced.json) for a larger example.
 
 ## Remote MCP Server
 

@@ -13,6 +13,8 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
 BASE_URL="${BASE_URL:-http://localhost:5000}"
 API_KEY="${API_KEY:-}"
 TEMP_DIR=$(mktemp -d)

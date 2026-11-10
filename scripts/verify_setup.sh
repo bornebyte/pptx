@@ -3,6 +3,9 @@
 # Setup Verification Script for PPT Generator
 # Run this after installation to verify everything is working
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "🔍 Verifying PPT Generator Setup..."
 echo ""
 
@@ -50,7 +53,7 @@ fi
 
 # Check main.py syntax
 echo -n "Checking main.py syntax... "
-if python -m py_compile main.py 2>/dev/null; then
+if python -m py_compile main.py src/main.py src/models.py 2>/dev/null; then
     echo "✅ No syntax errors"
 else
     echo "❌ Syntax errors found"
@@ -59,7 +62,7 @@ fi
 
 # Check templates
 echo -n "Checking templates... "
-if [ -f "templates/index.html" ] && [ -f "templates/base.html" ]; then
+if [ -f "src/templates/index.html" ] && [ -f "src/templates/base.html" ]; then
     echo "✅ Found"
 else
     echo "❌ Missing templates"
@@ -85,10 +88,10 @@ fi
 
 # Check documentation
 echo -n "Checking documentation... "
-if [ -f "README.md" ] && [ -f "DEPLOYMENT.md" ]; then
+if [ -f "README.md" ]; then
     echo "✅ Found"
 else
-    echo "⚠️  Some documentation missing"
+    echo "⚠️  README.md is missing"
 fi
 
 # Try to start Flask (just import test)
@@ -107,9 +110,10 @@ if [ $ERRORS -eq 0 ]; then
     echo "✅ All checks passed! Setup is complete."
     echo ""
     echo "🚀 You can now run:"
-    echo "   ./pptgen              # Development mode"
-    echo "   ./pptgen -p           # Production mode"
-    echo "   python main.py        # Direct Python"
+    echo "   ./pptgen                     # Development mode"
+    echo "   ./pptgen -p                  # Production mode"
+    echo "   python main.py               # Direct Python"
+    echo "   ./scripts/verify_setup.sh    # Run this setup check again"
     echo ""
     echo "📖 Visit http://localhost:5000 after starting"
 else

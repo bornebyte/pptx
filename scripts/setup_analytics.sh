@@ -2,6 +2,9 @@
 
 # Setup script for PPT Generator with Analytics
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "🚀 Setting up PPT Generator with Analytics..."
 
 # Create virtual environment if it doesn't exist
