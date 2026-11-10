@@ -48,15 +48,21 @@ if errorlevel 1 (
     echo [OK] Git found
 )
 
-REM Check pip
-python -m pip --version >nul 2>&1
+REM Prefer uv, but keep pip as a supported fallback.
+where uv >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] pip is not installed.
-    echo Please install pip or reinstall Python with pip included.
-    set /a ERRORS+=1
-    goto :error
+    python -m pip --version >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] Neither uv nor pip is available.
+        echo Install uv from https://docs.astral.sh/uv/getting-started/installation/ or enable pip in Python.
+        set /a ERRORS+=1
+        goto :error
+    )
+    set "PACKAGE_MANAGER=pip"
+    echo [WARNING] uv not found; using pip fallback
 ) else (
-    echo [OK] pip found
+    set "PACKAGE_MANAGER=uv"
+    echo [OK] uv found; using uv
 )
 
 REM Check if already installed
@@ -84,19 +90,7 @@ echo [OK] Repository cloned to %INSTALL_DIR%
 REM Navigate to install directory
 cd /d "%INSTALL_DIR%"
 
-REM Create virtual environment
-echo [INFO] Creating virtual environment...
-python -m venv venv
-if errorlevel 1 (
-    echo [ERROR] Failed to create virtual environment.
-    set /a ERRORS+=1
-    goto :error
-)
-echo [OK] Virtual environment created
-
-REM Activate virtual environment and install dependencies
 echo [INFO] Installing dependencies...
-call venv\Scripts\activate.bat
 
 REM Try to install with retries
 set "MAX_RETRIES=3"
@@ -107,21 +101,18 @@ if !RETRY_COUNT! geq !MAX_RETRIES! (
     echo [ERROR] Failed to install dependencies after !MAX_RETRIES! attempts.
     echo This might be due to network issues. Please try:
     echo   cd %INSTALL_DIR%
-    echo   venv\Scripts\activate.bat
-    echo   pip install -r requirements.txt --timeout 300
+    echo   uv sync --no-dev
+    echo   or: .venv\Scripts\python.exe -m pip install -r requirements.txt
     set /a ERRORS+=1
     goto :error
 )
 
-python -m pip install --upgrade pip --quiet --timeout 300
-if errorlevel 1 (
-    set /a RETRY_COUNT+=1
-    echo [WARNING] Installation failed. Retrying (!RETRY_COUNT!/!MAX_RETRIES!)...
-    timeout /t 2 >nul
-    goto :install_loop
+if "%PACKAGE_MANAGER%"=="uv" (
+    uv sync --project "%INSTALL_DIR%" --no-dev
+) else (
+    python -m venv "%INSTALL_DIR%\.venv"
+    if not errorlevel 1 "%INSTALL_DIR%\.venv\Scripts\python.exe" -m pip install -r "%INSTALL_DIR%\requirements.txt"
 )
-
-python -m pip install -r requirements.txt --quiet --timeout 300
 if errorlevel 1 (
     set /a RETRY_COUNT+=1
     echo [WARNING] Installation failed. Retrying (!RETRY_COUNT!/!MAX_RETRIES!)...
@@ -148,7 +139,6 @@ echo     exit /b 1
 echo ^)
 echo.
 echo cd /d "%%INSTALL_DIR%%"
-echo call venv\Scripts\activate.bat
 echo.
 echo if "%%1"=="-p" ^(
 echo     if "%%2"=="" ^(
@@ -157,7 +147,7 @@ echo     ^) else ^(
 echo         set PORT=%%2
 echo     ^)
 echo     echo Starting PPT Generator in production mode on port %%PORT%%...
-echo     gunicorn -w 4 -b 0.0.0.0:%%PORT%% main:app
+echo     "%%INSTALL_DIR%%\.venv\Scripts\python.exe" -m gunicorn -w 4 -b 0.0.0.0:%%PORT%% main:app
 echo ^) else if "%%1"=="-h" ^(
 echo     echo PPT Generator CLI
 echo     echo.
@@ -170,7 +160,7 @@ echo ^) else ^(
 echo     echo Starting PPT Generator in development mode...
 echo     set FLASK_APP=main.py
 echo     set FLASK_ENV=development
-echo     python main.py
+echo     "%%INSTALL_DIR%%\.venv\Scripts\python.exe" main.py
 echo ^)
 ) > "%BIN_DIR%\pptgen.bat"
 

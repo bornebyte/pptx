@@ -66,15 +66,21 @@ try {
         exit 1
     }
 
-    # Check pip
-    try {
-        $null = python -m pip --version 2>&1
-        Write-Success "pip found"
+    # Prefer uv, while preserving pip as a supported fallback.
+    $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uvCommand) {
+        $packageManager = "uv"
+        Write-Success "uv found; using uv"
     }
-    catch {
-        Write-Error-Message "pip is not installed."
-        Write-Host "Please install pip or reinstall Python with pip included." -ForegroundColor Yellow
-        exit 1
+    else {
+        python -m pip --version *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error-Message "Neither uv nor pip is available."
+            Write-Host "Install uv from https://docs.astral.sh/uv/getting-started/installation/ or enable pip in Python." -ForegroundColor Yellow
+            exit 1
+        }
+        $packageManager = "pip"
+        Write-Warning "uv not found; using pip fallback"
     }
 
     # Check if already installed
@@ -100,17 +106,8 @@ try {
     # Navigate to install directory
     Set-Location $INSTALL_DIR
 
-    # Create virtual environment
-    Write-Info "Creating virtual environment..."
-    python -m venv venv
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create virtual environment"
-    }
-    Write-Success "Virtual environment created"
-
-    # Activate virtual environment and install dependencies
-    Write-Info "Installing dependencies..."
-    & "$INSTALL_DIR\venv\Scripts\Activate.ps1"
+    # Install dependencies into the shared .venv location.
+    Write-Info "Installing dependencies with $packageManager..."
 
     # Try to install with retries
     $MAX_RETRIES = 3
@@ -119,8 +116,15 @@ try {
 
     while ($RETRY_COUNT -lt $MAX_RETRIES -and -not $installed) {
         try {
-            python -m pip install --upgrade pip --quiet --timeout 300 2>&1 | Out-Null
-            python -m pip install -r requirements.txt --quiet --timeout 300 2>&1 | Out-Null
+            if ($packageManager -eq "uv") {
+                uv sync --project $INSTALL_DIR --no-dev
+            }
+            else {
+                python -m venv "$INSTALL_DIR\.venv"
+                if ($LASTEXITCODE -ne 0) { throw "Failed to create virtual environment" }
+                & "$INSTALL_DIR\.venv\Scripts\python.exe" -m pip install -r "$INSTALL_DIR\requirements.txt" --timeout 300
+            }
+            if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed" }
             $installed = $true
             Write-Success "Dependencies installed"
         }
@@ -134,8 +138,8 @@ try {
                 Write-Error-Message "Failed to install dependencies after $MAX_RETRIES attempts."
                 Write-Host "This might be due to network issues. Please try:" -ForegroundColor Yellow
                 Write-Host "  cd $INSTALL_DIR" -ForegroundColor Yellow
-                Write-Host "  .\venv\Scripts\Activate.ps1" -ForegroundColor Yellow
-                Write-Host "  pip install -r requirements.txt --timeout 300" -ForegroundColor Yellow
+                Write-Host "  uv sync --no-dev" -ForegroundColor Yellow
+                Write-Host "  or: .\.venv\Scripts\python.exe -m pip install -r requirements.txt" -ForegroundColor Yellow
                 exit 1
             }
         }
@@ -163,7 +167,6 @@ if not exist "%INSTALL_DIR%" (
 )
 
 cd /d "%INSTALL_DIR%"
-call venv\Scripts\activate.bat
 
 if "%1"=="-p" (
     if "%2"=="" (
@@ -172,7 +175,7 @@ if "%1"=="-p" (
         set PORT=%2
     )
     echo Starting PPT Generator in production mode on port %PORT%...
-    gunicorn -w 4 -b 0.0.0.0:%PORT% main:app
+    "%INSTALL_DIR%\.venv\Scripts\python.exe" -m gunicorn -w 4 -b 0.0.0.0:%PORT% main:app
 ) else if "%1"=="-h" (
     echo PPT Generator CLI
     echo.
@@ -185,7 +188,7 @@ if "%1"=="-p" (
     echo Starting PPT Generator in development mode...
     set FLASK_APP=main.py
     set FLASK_ENV=development
-    python main.py
+    "%INSTALL_DIR%\.venv\Scripts\python.exe" main.py
 )
 "@
     

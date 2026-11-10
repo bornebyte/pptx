@@ -15,24 +15,25 @@ A Flask application for creating PowerPoint presentations from JSON. Generate fi
 
 ## Quick Start
 
-Requirements: Python 3.10+, pip, and Git.
+Requirements: Python 3.10+ and Git. uv is recommended; pip is also supported.
 
 ```bash
 git clone https://github.com/bornebyte/ppt-generator.git
 cd ppt-generator
-python -m venv .venv
+uv sync
+uv run python main.py
 ```
 
-Activate the virtual environment, then install dependencies and start the app:
+If you prefer pip, create the same `.venv` environment and install from `requirements.txt`:
 
 ```bash
 # Linux or macOS
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python main.py
 ```
 
-On Windows, activate with `.venv\Scripts\activate` (PowerShell) or `.venv\Scripts\activate.bat` (Command Prompt), then run the same `pip` and Python commands.
+On Windows, use `py -m venv .venv`, then `.venv\Scripts\python.exe -m pip install -r requirements.txt` and `.venv\Scripts\python.exe main.py`. The launchers use the environment interpreter directly, so they work whether uv or pip created the environment.
 
 Open <http://localhost:5000>. Application code, templates, and static assets live under `src/`; examples are in `src/examples/`. The root `main.py` is a compatibility entry point for Vercel and existing launch commands. Installers are grouped under `installers/`, app launchers under `launchers/`, and setup/maintenance utilities under `scripts/`.
 
@@ -97,13 +98,15 @@ For local/container deployment, Docker Compose mounts `./instance` so the SQLite
 docker compose up --build
 ```
 
-For a production WSGI server, install the requirements and run:
+For a production WSGI server, install the requirements with either package manager, then run:
 
 ```bash
-gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 main:app
+.venv/bin/python -m gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 main:app
 ```
 
 On serverless hosting, configure a persistent external SQL database. The default local SQLite database is not suitable for storing data across independent serverless instances.
+
+The Linux/macOS and Windows installers prefer uv when it is installed and fall back to pip otherwise. Both install dependencies into `.venv`; you can also manage dependencies manually with `uv sync` or `python -m pip install -r requirements.txt`.
 
 ## HTTP Endpoints
 

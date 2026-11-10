@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Setup script for PPT Generator with Analytics
 
@@ -7,23 +8,16 @@ cd "$PROJECT_ROOT"
 
 echo "🚀 Setting up PPT Generator with Analytics..."
 
-# Create virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
+# Prefer uv, while retaining a pip installation path.
+if command -v uv >/dev/null 2>&1; then
+    echo "Installing dependencies with uv..."
+    uv sync --project "$PROJECT_ROOT" --no-dev
+else
+    echo "uv not found; installing dependencies with pip..."
+    python3 -m venv .venv
+    .venv/bin/python -m pip install -r requirements.txt
 fi
-
-# Activate virtual environment
-echo "Activating virtual environment..."
-source venv/bin/activate
-
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
-
-# Install requirements
-echo "Installing dependencies..."
-pip install -r requirements.txt
+PYTHON="$PROJECT_ROOT/.venv/bin/python"
 
 # Create .env file if it doesn't exist
 if [ ! -f ".env" ]; then
@@ -34,7 +28,7 @@ fi
 
 # Initialize database
 echo "Initializing database..."
-python3 -c "
+"$PYTHON" -c "
 from main import app, db
 with app.app_context():
     db.create_all()
@@ -46,7 +40,7 @@ echo "✅ Setup complete!"
 echo ""
 echo "📝 Next steps:"
 echo "1. Edit .env file and change ADMIN_USERNAME and ADMIN_PASSWORD"
-echo "2. Run the application: python3 main.py"
+echo "2. Run the application: .venv/bin/python main.py"
 echo "3. Access admin dashboard at: http://localhost:5000/admin"
 echo ""
 echo "Default admin credentials (CHANGE THESE!):"

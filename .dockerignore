@@ -1,0 +1,7 @@
+.git
+.venv
+venv
+instance
+__pycache__
+*.py[cod]
+*.pptx

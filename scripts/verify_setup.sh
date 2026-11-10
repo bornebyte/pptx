@@ -29,18 +29,22 @@ fi
 
 # Check virtual environment
 echo -n "Checking virtual environment... "
-if [ -d "venv" ]; then
+if [ -d ".venv" ]; then
     echo "✅ Found"
 else
     echo "❌ Not found"
     ERRORS=$((ERRORS+1))
 fi
 
+PYTHON=".venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON=".venv/Scripts/python.exe"
+fi
+
 # Check dependencies
 echo -n "Checking dependencies... "
 if [ -f "requirements.txt" ]; then
-    source venv/bin/activate 2>/dev/null
-    if python -c "import flask; import pptx; import gunicorn" 2>/dev/null; then
+    if [ -x "$PYTHON" ] && "$PYTHON" -c "import flask; import pptx; import gunicorn" 2>/dev/null; then
         echo "✅ All installed"
     else
         echo "❌ Missing dependencies"
@@ -53,7 +57,7 @@ fi
 
 # Check main.py syntax
 echo -n "Checking main.py syntax... "
-if python -m py_compile main.py src/main.py src/models.py 2>/dev/null; then
+if python3 -m py_compile main.py src/main.py src/models.py 2>/dev/null; then
     echo "✅ No syntax errors"
 else
     echo "❌ Syntax errors found"
@@ -96,7 +100,7 @@ fi
 
 # Try to start Flask (just import test)
 echo -n "Testing Flask import... "
-if python -c "from main import app" 2>/dev/null; then
+if [ -x "$PYTHON" ] && "$PYTHON" -c "from main import app" 2>/dev/null; then
     echo "✅ Success"
 else
     echo "❌ Import failed"
@@ -112,7 +116,7 @@ if [ $ERRORS -eq 0 ]; then
     echo "🚀 You can now run:"
     echo "   ./launchers/pptgen           # Development mode"
     echo "   ./launchers/pptgen -p        # Production mode"
-    echo "   python main.py               # Direct Python"
+    echo "   .venv/bin/python main.py     # Direct Python (Windows: .venv/Scripts/python.exe)"
     echo "   ./scripts/verify_setup.sh    # Run this setup check again"
     echo ""
     echo "📖 Visit http://localhost:5000 after starting"
@@ -120,7 +124,7 @@ else
     echo "❌ Found $ERRORS error(s). Please fix them before running."
     echo ""
     echo "💡 Common fixes:"
-    echo "   - Run: pip install -r requirements.txt"
+    echo "   - Preferred: uv sync; fallback: .venv/bin/python -m pip install -r requirements.txt"
     echo "   - Run: chmod +x launchers/pptgen installers/install.sh"
     echo "   - Make sure you're in the project directory"
 fi

@@ -89,11 +89,16 @@ if ! check_command git; then
 fi
 print_success "Git found"
 
-if ! check_command pip3; then
-    print_error "pip3 is not installed. Please install pip3."
+if check_command uv; then
+    PACKAGE_MANAGER=uv
+    print_success "uv found ($(uv --version)); using uv"
+elif python3 -m pip --version >/dev/null 2>&1; then
+    PACKAGE_MANAGER=pip
+    print_warning "uv not found; falling back to pip"
+else
+    print_error "Neither uv nor pip is available. Install uv from https://docs.astral.sh/uv/getting-started/installation/"
     exit 1
 fi
-print_success "pip3 found"
 
 # Check if already installed
 if [ -d "$INSTALL_DIR" ]; then
@@ -117,22 +122,29 @@ print_success "Repository cloned to $INSTALL_DIR"
 # Navigate to install directory
 cd "$INSTALL_DIR"
 
-# Create virtual environment
-print_info "Creating virtual environment..."
-python3 -m venv venv
-print_success "Virtual environment created"
-
-# Activate virtual environment and install dependencies
-print_info "Installing dependencies..."
-source venv/bin/activate
+# Create the uv-managed environment or use pip as a fallback
+print_info "Installing dependencies with $PACKAGE_MANAGER..."
 
 # Try to install with increased timeout and retries
 MAX_RETRIES=3
 RETRY_COUNT=0
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if pip install --upgrade pip --quiet --timeout 300 && \
-       pip install -r requirements.txt --quiet --timeout 300; then
+    if [ "$PACKAGE_MANAGER" = "uv" ]; then
+        if uv sync --project "$INSTALL_DIR" --no-dev; then
+            INSTALL_SUCCEEDED=1
+        else
+            INSTALL_SUCCEEDED=0
+        fi
+    else
+        if python3 -m venv "$INSTALL_DIR/.venv" && \
+            "$INSTALL_DIR/.venv/bin/python" -m pip install -r "$INSTALL_DIR/requirements.txt"; then
+            INSTALL_SUCCEEDED=1
+        else
+            INSTALL_SUCCEEDED=0
+        fi
+    fi
+    if [ "$INSTALL_SUCCEEDED" -eq 1 ]; then
         print_success "Dependencies installed"
         break
     else
@@ -142,10 +154,10 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             sleep 2
         else
             print_error "Failed to install dependencies after $MAX_RETRIES attempts."
-            print_info "This might be due to network issues. Please try:"
+            print_info "Retry the dependency install with either package manager:"
             echo "  cd $INSTALL_DIR"
-            echo "  source venv/bin/activate"
-            echo "  pip install -r requirements.txt --timeout 300"
+            echo "  uv sync --no-dev"
+            echo "  # or: .venv/bin/python -m pip install -r requirements.txt"
             exit 1
         fi
     fi
@@ -173,9 +185,6 @@ if [ ! -d "$INSTALL_DIR" ]; then
 fi
 
 cd "$INSTALL_DIR"
-
-# Activate virtual environment
-source venv/bin/activate
 
 # Parse arguments
 PRODUCTION=0
@@ -214,12 +223,12 @@ done
 # Start the server
 if [ $PRODUCTION -eq 1 ]; then
     echo "Starting PPT Generator in production mode on port $PORT..."
-    gunicorn -w 4 -b 0.0.0.0:$PORT main:app
+    "$INSTALL_DIR/.venv/bin/python" -m gunicorn -w 4 -b 0.0.0.0:$PORT main:app
 else
     echo "Starting PPT Generator in development mode..."
     export FLASK_APP=main.py
     export FLASK_ENV=development
-    python main.py
+    "$INSTALL_DIR/.venv/bin/python" main.py
 fi
 EOF
 

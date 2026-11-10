@@ -1,0 +1,20 @@
+[project]
+name = "ppt-generator"
+version = "1.0.0"
+description = "A Flask app for generating PowerPoint presentations from JSON."
+requires-python = ">=3.10"
+dependencies = [
+    "Flask==3.0.0",
+    "Flask-SQLAlchemy==3.1.1",
+    "gunicorn==21.2.0",
+    "lxml==6.0.2",
+    "pillow==12.0.0",
+    "psycopg[binary]==3.3.8",
+    "psycopg2-binary==2.9.13",
+    "python-pptx==1.0.2",
+    "typing_extensions==4.15.0",
+    "xlsxwriter==3.2.9",
+]
+
+[tool.uv]
+package = false

@@ -10,9 +10,9 @@ $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT_DIR = (Resolve-Path (Join-Path $SCRIPT_DIR "..")).Path
 Set-Location $PROJECT_DIR
 
-$VENV_DIR = Join-Path $PROJECT_DIR "venv"
-if (-not (Test-Path $VENV_DIR) -and (Test-Path "$env:USERPROFILE\.ppt-generator\venv")) {
-    $VENV_DIR = "$env:USERPROFILE\.ppt-generator\venv"
+$VENV_DIR = Join-Path $PROJECT_DIR ".venv"
+if (-not (Test-Path $VENV_DIR) -and (Test-Path "$env:USERPROFILE\.ppt-generator\.venv")) {
+    $VENV_DIR = "$env:USERPROFILE\.ppt-generator\.venv"
 }
 
 if (-not (Test-Path $VENV_DIR)) {
@@ -21,8 +21,6 @@ if (-not (Test-Path $VENV_DIR)) {
     exit 1
 }
 
-# Activate virtual environment
-& "$VENV_DIR\Scripts\Activate.ps1"
 
 # Show help
 if ($Help) {
@@ -46,12 +44,12 @@ if ($Help) {
 if ($Production) {
     Write-Host "Starting PPT Generator in production mode on port $Port..." -ForegroundColor Green
     Write-Host "Access the application at: http://localhost:$Port" -ForegroundColor Cyan
-    gunicorn -w 4 -b "0.0.0.0:$Port" main:app
+    & "$VENV_DIR\Scripts\python.exe" -m gunicorn -w 4 -b "0.0.0.0:$Port" main:app
 }
 else {
     Write-Host "Starting PPT Generator in development mode..." -ForegroundColor Green
     Write-Host "Access the application at: http://localhost:5000" -ForegroundColor Cyan
     $env:FLASK_APP = "main.py"
     $env:FLASK_ENV = "development"
-    python main.py
+    & "$VENV_DIR\Scripts\python.exe" main.py
 }

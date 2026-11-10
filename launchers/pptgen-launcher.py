@@ -8,47 +8,28 @@ Works on Windows, macOS, and Linux
 import os
 import sys
 import subprocess
-import platform
 from pathlib import Path
 
 def get_script_dir():
     """Get the directory where this script is located"""
     return Path(__file__).resolve().parent.parent
 
-def check_venv():
-    """Check if virtual environment exists"""
+def get_python_executable():
+    """Find the project's virtualenv interpreter (created by uv or pip)."""
     script_dir = get_script_dir()
-    venv_dir = script_dir / "venv"
+    venv_dir = script_dir / ".venv"
     if not venv_dir.exists():
-        installed_venv = Path.home() / ".ppt-generator" / "venv"
+        installed_venv = Path.home() / ".ppt-generator" / ".venv"
         if installed_venv.exists():
             venv_dir = installed_venv
-    
     if not venv_dir.exists():
-        print("❌ Error: Virtual environment not found.")
-        print("Please run the installation script first:")
-        if platform.system() == "Windows":
-            print("  installers\\install.bat  (or)  powershell -File installers\\install.ps1")
-        else:
-            print("  ./installers/install.sh")
+        print("❌ Virtual environment not found. Run the platform installer, `uv sync`, or create .venv and install requirements.txt with pip.")
         sys.exit(1)
-    
-    return venv_dir
-
-def get_python_executable(venv_dir):
-    """Get the Python executable path from venv"""
-    system = platform.system()
-    
-    if system == "Windows":
-        python_exe = venv_dir / "Scripts" / "python.exe"
-    else:
-        python_exe = venv_dir / "bin" / "python"
-    
-    if not python_exe.exists():
-        print(f"❌ Error: Python executable not found at {python_exe}")
+    executable = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not executable.exists():
+        print(f"❌ Python interpreter not found in {venv_dir}.")
         sys.exit(1)
-    
-    return str(python_exe)
+    return executable
 
 def show_help():
     """Show help message"""
@@ -90,33 +71,21 @@ def main():
         except (ValueError, IndexError):
             pass
     
-    # Check virtual environment
-    venv_dir = check_venv()
-    python_exe = get_python_executable(venv_dir)
+    python_executable = get_python_executable()
+    env = os.environ.copy()
     
     try:
         if production:
             print(f"🚀 Starting PPT Generator in production mode on port {port}...")
             print(f"📖 Access at: http://localhost:{port}")
             
-            # Check if gunicorn is available
-            result = subprocess.run(
-                [python_exe, "-m", "pip", "show", "gunicorn"],
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                print("❌ Error: Gunicorn not found. Installing...")
-                subprocess.run([python_exe, "-m", "pip", "install", "gunicorn"], check=True)
-            
             # Run with gunicorn
             subprocess.run([
-                python_exe, "-m", "gunicorn",
+                str(python_executable), "-m", "gunicorn",
                 "-w", "4",
                 "-b", f"0.0.0.0:{port}",
                 "main:app"
-            ], check=True)
+            ], env=env, check=True)
         else:
             print("🚀 Starting PPT Generator in development mode...")
             print("📖 Access at: http://localhost:5000")
@@ -125,7 +94,7 @@ def main():
             env["FLASK_APP"] = "main.py"
             env["FLASK_ENV"] = "development"
             
-            subprocess.run([python_exe, "main.py"], env=env, check=True)
+            subprocess.run([str(python_executable), "main.py"], env=env, check=True)
     
     except KeyboardInterrupt:
         print("\n\n⏹️  Server stopped by user")

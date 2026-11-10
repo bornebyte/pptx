@@ -6,16 +6,14 @@ for %%I in ("%SCRIPT_DIR%..") do set "PROJECT_DIR=%%~fI"
 cd /d "%PROJECT_DIR%"
 
 REM Prefer a project-local environment, then use the installer-managed environment.
-set "VENV_DIR=%PROJECT_DIR%\venv"
-if not exist "%VENV_DIR%" if exist "%USERPROFILE%\.ppt-generator\venv" set "VENV_DIR=%USERPROFILE%\.ppt-generator\venv"
+set "VENV_DIR=%PROJECT_DIR%\.venv"
+if not exist "%VENV_DIR%" if exist "%USERPROFILE%\.ppt-generator\.venv" set "VENV_DIR=%USERPROFILE%\.ppt-generator\.venv"
 if not exist "%VENV_DIR%" (
     echo Error: Virtual environment not found.
     echo Please run installers\install.bat first.
     exit /b 1
 )
 
-REM Activate virtual environment
-call "%VENV_DIR%\Scripts\activate.bat"
 
 REM Parse arguments
 set "PRODUCTION=0"
@@ -36,13 +34,13 @@ REM Start the server
 if "%PRODUCTION%"=="1" (
     echo Starting PPT Generator in production mode on port %PORT%...
     echo Access the application at: http://localhost:%PORT%
-    gunicorn -w 4 -b 0.0.0.0:%PORT% main:app
+    "%VENV_DIR%\Scripts\python.exe" -m gunicorn -w 4 -b 0.0.0.0:%PORT% main:app
 ) else (
     echo Starting PPT Generator in development mode...
     echo Access the application at: http://localhost:5000
     set FLASK_APP=main.py
     set FLASK_ENV=development
-    python main.py
+    "%VENV_DIR%\Scripts\python.exe" main.py
 )
 exit /b 0
 
