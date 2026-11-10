@@ -71,19 +71,19 @@ fi
 
 # Check executable permissions
 echo -n "Checking pptgen executable... "
-if [ -x "pptgen" ]; then
+if [ -x "launchers/pptgen" ]; then
     echo "✅ Executable"
 else
-    echo "⚠️  Not executable (run: chmod +x pptgen)"
+    echo "⚠️  Not executable (run: chmod +x launchers/pptgen)"
     ERRORS=$((ERRORS+1))
 fi
 
-# Check install.sh
-echo -n "Checking install.sh... "
-if [ -f "install.sh" ] && [ -x "install.sh" ]; then
+# Check Linux/macOS installer
+echo -n "Checking Linux/macOS installer... "
+if [ -f "installers/install.sh" ] && [ -x "installers/install.sh" ]; then
     echo "✅ Found and executable"
 else
-    echo "⚠️  Not executable (run: chmod +x install.sh)"
+    echo "⚠️  Not executable (run: chmod +x installers/install.sh)"
 fi
 
 # Check documentation
@@ -110,8 +110,8 @@ if [ $ERRORS -eq 0 ]; then
     echo "✅ All checks passed! Setup is complete."
     echo ""
     echo "🚀 You can now run:"
-    echo "   ./pptgen                     # Development mode"
-    echo "   ./pptgen -p                  # Production mode"
+    echo "   ./launchers/pptgen           # Development mode"
+    echo "   ./launchers/pptgen -p        # Production mode"
     echo "   python main.py               # Direct Python"
     echo "   ./scripts/verify_setup.sh    # Run this setup check again"
     echo ""
@@ -121,7 +121,7 @@ else
     echo ""
     echo "💡 Common fixes:"
     echo "   - Run: pip install -r requirements.txt"
-    echo "   - Run: chmod +x pptgen install.sh"
+    echo "   - Run: chmod +x launchers/pptgen installers/install.sh"
     echo "   - Make sure you're in the project directory"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

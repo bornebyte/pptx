@@ -1,6 +1,6 @@
 # PowerPoint Generator
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 A Flask application for creating PowerPoint presentations from JSON. Generate files in the web interface, through the HTTP API, or from an AI client connected to the remote MCP server.
@@ -15,7 +15,7 @@ A Flask application for creating PowerPoint presentations from JSON. Generate fi
 
 ## Quick Start
 
-Requirements: Python 3.8+, pip, and Git.
+Requirements: Python 3.10+, pip, and Git.
 
 ```bash
 git clone https://github.com/bornebyte/ppt-generator.git
@@ -34,7 +34,9 @@ python main.py
 
 On Windows, activate with `.venv\Scripts\activate` (PowerShell) or `.venv\Scripts\activate.bat` (Command Prompt), then run the same `pip` and Python commands.
 
-Open <http://localhost:5000>. Application code, templates, and static assets live under `src/`; the default and enhanced example presentations are in `src/examples/`. The root `main.py` is a compatibility entry point for Vercel and existing launch commands. The `pptgen`, `pptgen.bat`, and `pptgen-launcher.py` launchers are also available. Setup and maintenance utilities live under `scripts/`.
+Open <http://localhost:5000>. Application code, templates, and static assets live under `src/`; examples are in `src/examples/`. The root `main.py` is a compatibility entry point for Vercel and existing launch commands. Installers are grouped under `installers/`, app launchers under `launchers/`, and setup/maintenance utilities under `scripts/`.
+
+Run `./installers/install.sh` on Linux/macOS, `installers\\install.bat` in Windows Command Prompt, or `installers\\install.ps1` in PowerShell. To launch a checkout that already has a virtual environment, use `./launchers/pptgen`, `launchers\\pptgen.bat`, or `launchers\\pptgen.ps1` for your shell. The installer also provides a `pptgen` command after setup.
 
 ## Create a Presentation
 

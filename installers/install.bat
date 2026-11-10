@@ -23,12 +23,18 @@ REM Check Python
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python is not installed or not in PATH.
-    echo Please install Python 3.8 or higher from https://www.python.org/
+    echo Please install Python 3.10 or higher from https://www.python.org/
     set /a ERRORS+=1
     goto :error
 ) else (
     for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
     echo [OK] Python !PYTHON_VERSION! found
+)
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+if errorlevel 1 (
+    echo [ERROR] Python 3.10 or higher is required.
+    set /a ERRORS+=1
+    goto :error
 )
 
 REM Check Git

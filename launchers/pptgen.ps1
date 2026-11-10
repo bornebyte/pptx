@@ -7,23 +7,28 @@ param(
 )
 
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $SCRIPT_DIR
+$PROJECT_DIR = (Resolve-Path (Join-Path $SCRIPT_DIR "..")).Path
+Set-Location $PROJECT_DIR
 
-# Check if virtual environment exists
-if (-not (Test-Path "$SCRIPT_DIR\venv")) {
+$VENV_DIR = Join-Path $PROJECT_DIR "venv"
+if (-not (Test-Path $VENV_DIR) -and (Test-Path "$env:USERPROFILE\.ppt-generator\venv")) {
+    $VENV_DIR = "$env:USERPROFILE\.ppt-generator\venv"
+}
+
+if (-not (Test-Path $VENV_DIR)) {
     Write-Host "Error: Virtual environment not found." -ForegroundColor Red
-    Write-Host "Please run install.ps1 first." -ForegroundColor Yellow
+    Write-Host "Please run installers\install.ps1 first." -ForegroundColor Yellow
     exit 1
 }
 
 # Activate virtual environment
-& "$SCRIPT_DIR\venv\Scripts\Activate.ps1"
+& "$VENV_DIR\Scripts\Activate.ps1"
 
 # Show help
 if ($Help) {
     Write-Host "PPT Generator CLI" -ForegroundColor Green
     Write-Host ""
-    Write-Host "Usage: .\pptgen.ps1 [OPTIONS]" -ForegroundColor Cyan
+    Write-Host "Usage: .\launchers\pptgen.ps1 [OPTIONS]" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Options:" -ForegroundColor Cyan
     Write-Host "  -Production    Run in production mode with Gunicorn"
@@ -31,9 +36,9 @@ if ($Help) {
     Write-Host "  -Help          Show this help message"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor Cyan
-    Write-Host "  .\pptgen.ps1                    # Run development server"
-    Write-Host "  .\pptgen.ps1 -Production        # Run production server"
-    Write-Host "  .\pptgen.ps1 -Production -Port 8000  # Custom port"
+    Write-Host "  .\launchers\pptgen.ps1                    # Run development server"
+    Write-Host "  .\launchers\pptgen.ps1 -Production        # Run production server"
+    Write-Host "  .\launchers\pptgen.ps1 -Production -Port 8000  # Custom port"
     exit 0
 }
 

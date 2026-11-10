@@ -1,5 +1,5 @@
 # PPT Generator Installation Script for Windows PowerShell
-# Run with: powershell -ExecutionPolicy Bypass -File install.ps1
+# Run with: powershell -ExecutionPolicy Bypass -File installers/install.ps1
 
 $ErrorActionPreference = "Stop"
 
@@ -46,7 +46,12 @@ try {
     }
     catch {
         Write-Error-Message "Python is not installed or not in PATH."
-        Write-Host "Please install Python 3.8+ from https://www.python.org/" -ForegroundColor Yellow
+        Write-Host "Please install Python 3.10+ from https://www.python.org/" -ForegroundColor Yellow
+        exit 1
+    }
+    python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error-Message "Python 3.10 or higher is required."
         exit 1
     }
 

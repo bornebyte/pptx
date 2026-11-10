@@ -17,7 +17,7 @@ esac
 if [ "$MACHINE" = "UNKNOWN:${OS}" ]; then
     echo "Error: Unsupported operating system: ${OS}"
     echo "This script supports Linux and macOS only."
-    echo "For Windows, please use install.bat or install.ps1"
+    echo "For Windows, please use installers/install.bat or installers/install.ps1"
     exit 1
 fi
 
@@ -69,11 +69,18 @@ echo ""
 print_info "Checking prerequisites..."
 
 if ! check_command python3; then
-    print_error "Python 3 is not installed. Please install Python 3.8 or higher."
+    print_error "Python 3 is not installed. Please install Python 3.10 or higher."
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
+PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
+PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]; }; then
+    print_error "Python 3.10 or higher is required. Found $(python3 --version)."
+    exit 1
+fi
+
+PYTHON_VERSION="$PYTHON_MAJOR.$PYTHON_MINOR"
 print_success "Python $PYTHON_VERSION found"
 
 if ! check_command git; then
@@ -161,7 +168,7 @@ INSTALL_DIR="$HOME/.ppt-generator"
 # Check if installation exists
 if [ ! -d "$INSTALL_DIR" ]; then
     echo "Error: PPT Generator is not installed."
-    echo "Run: curl -sSL https://raw.githubusercontent.com/bornebyte/ppt-generator/main/install.sh | bash"
+    echo "Run: curl -sSL https://raw.githubusercontent.com/bornebyte/ppt-generator/main/installers/install.sh | bash"
     exit 1
 fi
 

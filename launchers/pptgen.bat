@@ -2,17 +2,20 @@
 REM PPT Generator CLI for Windows
 
 set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%"
+for %%I in ("%SCRIPT_DIR%..") do set "PROJECT_DIR=%%~fI"
+cd /d "%PROJECT_DIR%"
 
-REM Check if virtual environment exists
-if not exist "%SCRIPT_DIR%venv" (
+REM Prefer a project-local environment, then use the installer-managed environment.
+set "VENV_DIR=%PROJECT_DIR%\venv"
+if not exist "%VENV_DIR%" if exist "%USERPROFILE%\.ppt-generator\venv" set "VENV_DIR=%USERPROFILE%\.ppt-generator\venv"
+if not exist "%VENV_DIR%" (
     echo Error: Virtual environment not found.
-    echo Please run install.bat first.
+    echo Please run installers\install.bat first.
     exit /b 1
 )
 
 REM Activate virtual environment
-call venv\Scripts\activate.bat
+call "%VENV_DIR%\Scripts\activate.bat"
 
 REM Parse arguments
 set "PRODUCTION=0"
@@ -46,14 +49,14 @@ exit /b 0
 :help
 echo PPT Generator CLI
 echo.
-echo Usage: pptgen.bat [OPTIONS]
+echo Usage: launchers\pptgen.bat [OPTIONS]
 echo.
 echo Options:
 echo   -p [port]    Run in production mode with Gunicorn (default port: 5000)
 echo   -h           Show this help message
 echo.
 echo Examples:
-echo   pptgen.bat              # Run development server
-echo   pptgen.bat -p           # Run production server on port 5000
-echo   pptgen.bat -p 8000      # Run production server on port 8000
+echo   launchers\pptgen.bat              # Run development server
+echo   launchers\pptgen.bat -p           # Run production server on port 5000
+echo   launchers\pptgen.bat -p 8000      # Run production server on port 8000
 exit /b 0

@@ -13,20 +13,24 @@ from pathlib import Path
 
 def get_script_dir():
     """Get the directory where this script is located"""
-    return Path(__file__).parent.absolute()
+    return Path(__file__).resolve().parent.parent
 
 def check_venv():
     """Check if virtual environment exists"""
     script_dir = get_script_dir()
     venv_dir = script_dir / "venv"
+    if not venv_dir.exists():
+        installed_venv = Path.home() / ".ppt-generator" / "venv"
+        if installed_venv.exists():
+            venv_dir = installed_venv
     
     if not venv_dir.exists():
         print("❌ Error: Virtual environment not found.")
         print("Please run the installation script first:")
         if platform.system() == "Windows":
-            print("  install.bat  (or)  powershell -File install.ps1")
+            print("  installers\\install.bat  (or)  powershell -File installers\\install.ps1")
         else:
-            print("  ./install.sh")
+            print("  ./installers/install.sh")
         sys.exit(1)
     
     return venv_dir
@@ -50,16 +54,16 @@ def show_help():
     """Show help message"""
     print("PPT Generator CLI")
     print()
-    print("Usage: pptgen-launcher.py [OPTIONS]")
+    print("Usage: python launchers/pptgen-launcher.py [OPTIONS]")
     print()
     print("Options:")
     print("  -p, --production [port]    Run in production mode (default port: 5000)")
     print("  -h, --help                 Show this help message")
     print()
     print("Examples:")
-    print("  python pptgen-launcher.py              # Development mode")
-    print("  python pptgen-launcher.py -p           # Production mode")
-    print("  python pptgen-launcher.py -p 8000      # Production on port 8000")
+    print("  python launchers/pptgen-launcher.py              # Development mode")
+    print("  python launchers/pptgen-launcher.py -p           # Production mode")
+    print("  python launchers/pptgen-launcher.py -p 8000      # Production on port 8000")
     print()
 
 def main():
