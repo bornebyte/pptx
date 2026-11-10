@@ -131,9 +131,24 @@ RETRY_COUNT=0
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     if [ "$PACKAGE_MANAGER" = "uv" ]; then
-        if uv sync --project "$INSTALL_DIR" --no-dev; then
-            INSTALL_SUCCEEDED=1
+        if [ -f "$INSTALL_DIR/pyproject.toml" ]; then
+            if uv sync --project "$INSTALL_DIR" --no-dev; then
+                INSTALL_SUCCEEDED=1
+            else
+                INSTALL_SUCCEEDED=0
+            fi
+        elif [ -f "$INSTALL_DIR/requirements.txt" ]; then
+            # Older repository revisions have requirements.txt but no
+            # pyproject.toml, so install those dependencies into the same
+            # .venv expected by the launchers.
+            if uv venv "$INSTALL_DIR/.venv" && \
+                uv pip install --python "$INSTALL_DIR/.venv/bin/python" -r "$INSTALL_DIR/requirements.txt"; then
+                INSTALL_SUCCEEDED=1
+            else
+                INSTALL_SUCCEEDED=0
+            fi
         else
+            print_error "No pyproject.toml or requirements.txt found in $INSTALL_DIR."
             INSTALL_SUCCEEDED=0
         fi
     else
